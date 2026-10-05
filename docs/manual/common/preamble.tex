@@ -1,0 +1,88 @@
+% Shared layout for the four manuals. Compile with XeLaTeX (see docs/tools/build_manuals.py).
+\usepackage[a4paper,margin=2.3cm,headheight=14pt]{geometry}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs,tabularx,array,longtable}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{amsmath,amssymb}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{ink}{HTML}{1F2937}
+\definecolor{accent}{HTML}{0F5C8C}
+\definecolor{soft}{HTML}{EEF3F7}
+\definecolor{warnbg}{HTML}{FFF6E5}
+\definecolor{warnline}{HTML}{C47F00}
+\definecolor{codebg}{HTML}{F7F7F5}
+\definecolor{codegray}{HTML}{8A8F98}
+\definecolor{codekw}{HTML}{0F5C8C}
+\definecolor{codestr}{HTML}{8A4B08}
+\definecolor{codecom}{HTML}{4E7A3E}
+
+\color{ink}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.6em}{}
+\titleformat{\part}[display]{\centering\Huge\bfseries\color{accent}}{\partname~\thepart}{0.5em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.3pt}
+\fancyfoot[C]{\small\thepage}
+
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{codekw}\bfseries,
+  stringstyle=\color{codestr},
+  commentstyle=\color{codecom},
+  numbers=left,
+  numberstyle=\tiny\color{codegray},
+  numbersep=6pt,
+  frame=single,
+  rulecolor=\color{codegray!40},
+  breaklines=true,
+  breakatwhitespace=true,
+  postbreak=\mbox{\textcolor{codegray}{$\hookrightarrow$}\space},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  tabsize=4,
+  upquote=true,
+  xleftmargin=1.6em,
+  framexleftmargin=1.4em,
+  aboveskip=8pt,
+  belowskip=8pt,
+  captionpos=t,
+}
+\lstdefinestyle{shell}{language=bash,numbers=none,xleftmargin=0.6em,framexleftmargin=0.4em,
+  keywordstyle=\color{ink},commentstyle=\color{codegray}}
+\lstdefinestyle{plain}{language={},numbers=none,xleftmargin=0.6em,framexleftmargin=0.4em}
+\lstnewenvironment{shell}{\lstset{style=shell}}{}
+\lstnewenvironment{plaincode}{\lstset{style=plain}}{}
+
+% Result numbers (\RlinEst etc.) come from the latest pipeline run.
+\InputIfFileExists{generated/results.tex}{}{\typeout{Run docs/tools/build_manuals.py first}}
+
+% \snippet{path:name} prints the current source of a function or class.
+\InputIfFileExists{generated/snippets.tex}{}{\typeout{Run docs/tools/build_manuals.py first}}
+\newcommand{\snippet}[1]{%
+  \ifcsname snip@#1\endcsname\csname snip@#1\endcsname
+  \else\fbox{\ttfamily missing snippet: \detokenize{#1}}\fi}
+
+\newtcolorbox{note}[1][Note]{colback=soft,colframe=accent,boxrule=0.5pt,arc=1pt,
+  left=6pt,right=6pt,top=4pt,bottom=4pt,fonttitle=\bfseries\small,title=#1,breakable}
+\newtcolorbox{warn}[1][Watch out]{colback=warnbg,colframe=warnline,boxrule=0.5pt,arc=1pt,
+  left=6pt,right=6pt,top=4pt,bottom=4pt,fonttitle=\bfseries\small,title=#1,breakable}
+
+\newcommand{\file}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\cmd}[1]{\texttt{\detokenize{#1}}}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}

@@ -1,0 +1,37 @@
+# docker compose run --rm pipeline   # build data, models, reports (first time)
+# docker compose up api ui mlflow     # serve
+# Code guide: section "Docker" (sec:docker).
+services:
+  pipeline:
+    build: { context: ., dockerfile: infra/docker/Dockerfile }
+    command: python -m pipelines.run_pipeline
+    volumes: ["./artifacts:/app/artifacts"]
+    profiles: ["jobs"]
+
+  api:
+    build: { context: ., dockerfile: infra/docker/Dockerfile }
+    ports: ["8000:8000"]
+    volumes: ["./artifacts:/app/artifacts"]
+    environment:
+      AGENT_PROVIDER: ${AGENT_PROVIDER:-deterministic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      retries: 3
+
+  ui:
+    build: { context: ., dockerfile: infra/docker/Dockerfile }
+    command: streamlit run app/ui/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    ports: ["8501:8501"]
+    volumes: ["./artifacts:/app/artifacts"]
+    depends_on: [api]
+
+  mlflow:
+    build: { context: ., dockerfile: infra/docker/Dockerfile }
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////app/artifacts/mlflow.db
+      --artifacts-destination /app/artifacts/mlartifacts
+    ports: ["5000:5000"]
+    volumes: ["./artifacts:/app/artifacts"]

@@ -1,0 +1,36 @@
+# Main settings. Environment variables with the UPLIFT_ prefix override these
+# (for example UPLIFT_N=20000). See code guide, section "Configuration".
+
+seed: 0
+n_subscribers: 50000
+
+paths:
+  artifacts: artifacts
+  database: artifacts/uplift.db
+  report: artifacts/reports/latest_run.json
+  model: artifacts/models/uplift_scorer.joblib
+  knowledge: docs/knowledge
+
+benchmark:
+  split: [0.5, 0.2, 0.3]        # train / validation / test
+  n_draws: 30                   # independent simulation draws for the headline
+  primary_model: causal_forest  # fixed before any run; no data-driven selection
+  bootstrap_reps: 1000          # test-set bootstrap on draw 0 (observed readout)
+  coverage: 0.2                 # share of customers we can contact
+  kmeans_k: 8
+  forest_trees: 300
+
+experiment:
+  srm_alpha: 0.001
+  smd_threshold: 0.1
+
+agent:
+  provider: deterministic       # deterministic | anthropic
+  max_review_retries: 2
+  contact_cooldown_days: 30
+  default_budget: 2000          # max offers per campaign
+
+mlflow:
+  tracking_uri: sqlite:///artifacts/mlflow.db
+  experiment: uplift-retention
+  model_name: uplift_scorer

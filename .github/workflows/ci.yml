@@ -1,0 +1,51 @@
+# CI: lint, tests, a reduced pipeline run with quality gates, and the agent eval.
+# A failed gate fails the build and the model is not promoted.
+# Code guide: section "CI" (sec:ci).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AGENT_PROVIDER: deterministic
+      MLFLOW_DISABLE_AGENT_HINT: "1"
+      # Smaller job than the local run: same N, fewer draws, trees, and bootstrap reps.
+      UPLIFT_DRAWS: "3"
+      UPLIFT_TREES: "100"
+      UPLIFT_BOOTSTRAP: "200"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install --no-deps -e .
+      - name: Lint
+        run: ruff check .
+      - name: Unit and integration tests (skipped when tests/ is not in the repo)
+        run: if [ -d tests ]; then pytest -q; else echo "tests/ not in repository; skipping"; fi
+      - name: Pipeline with quality gates (Qini, policy value, experiment checks)
+        run: python -m pipelines.run_pipeline
+      - name: Fail if any gate failed
+        run: python -c "import json,sys; g=json.load(open('artifacts/reports/gates.json')); print(g); sys.exit(0 if g['passed'] else 1)"
+      - name: Agent evaluation (golden cases)
+        run: python -m pipelines.agent_eval
+      - name: MLflow rollback drill
+        run: |
+          python -m pipelines.run_pipeline --steps register
+          python -m scripts.rollback_model --status
+          python -m scripts.rollback_model
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reports
+          path: artifacts/reports/

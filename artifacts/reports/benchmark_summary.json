@@ -1,0 +1,215 @@
+{
+  "n_subscribers": 50000,
+  "experiment": {
+    "srm_p": 0.5670283920847111,
+    "max_abs_smd": 0.022139615015547256,
+    "ate_lin_pp": {
+      "estimate": 0.5817418548733522,
+      "ci_low": 0.050812612539592565,
+      "ci_high": 1.1126710972071119
+    },
+    "ate_diff_in_means_pp": {
+      "estimate": 0.7598782599381639,
+      "ci_low": 0.19653624593781527,
+      "ci_high": 1.3232202739385128
+    },
+    "true_ate_pp": 0.6158075962253949,
+    "observational_pp": {
+      "naive": -11.814992909183879,
+      "ipw": -0.5976302108554308,
+      "aipw": 0.11606001309566168,
+      "aipw_se": 0.3516889303038664
+    },
+    "n_treat": 25064,
+    "n_control": 24936,
+    "churn_control_pct": 12.074911774141803,
+    "churn_treat_pct": 11.31503351420364,
+    "max_abs_smd_before_weighting": 0.7846166210729874,
+    "max_abs_smd_after_weighting": 0.03752177912598923
+  },
+  "benchmark": {
+    "n_draws": 30,
+    "primary_model": "causal_forest",
+    "table_mean": {
+      "churn_risk": {
+        "pehe_pp": null,
+        "qini_observed": 0.0012447846391308616,
+        "qini_true_normalized": 0.3946815926989925,
+        "policy_true": 40.63043748116699
+      },
+      "kmeans": {
+        "pehe_pp": 1.8807263198355382,
+        "qini_observed": 0.00026262748125303886,
+        "qini_true_normalized": 0.13413940553240533,
+        "policy_true": 22.508141262716865,
+        "netpolicy_true_net_value": -251.8983852455928,
+        "netpolicy_n_contacted": 72.5
+      },
+      "constant_ate": {
+        "pehe_pp": 1.6382956160211526,
+        "qini_observed": 0.0,
+        "qini_true_normalized": 0.0,
+        "policy_true": 18.18500710517532,
+        "netpolicy_true_net_value": 0.0,
+        "netpolicy_n_contacted": 0.0
+      },
+      "t_learner": {
+        "pehe_pp": 2.5093858610366975,
+        "qini_observed": 0.0013052736675136407,
+        "qini_true_normalized": 0.46166353093587004,
+        "policy_true": 50.05682414161666,
+        "netpolicy_true_net_value": -2127.270815654897,
+        "netpolicy_n_contacted": 1599.5
+      },
+      "x_learner": {
+        "pehe_pp": 1.7833757575848368,
+        "qini_observed": 0.001212696666379146,
+        "qini_true_normalized": 0.5545024209918685,
+        "policy_true": 53.188738218611526,
+        "netpolicy_true_net_value": -619.6292543987317,
+        "netpolicy_n_contacted": 853.4333333333333
+      },
+      "causal_forest": {
+        "pehe_pp": 1.6061880650630882,
+        "qini_observed": 0.0010435612196537276,
+        "qini_true_normalized": 0.46911223825008125,
+        "policy_true": 48.473730814556596,
+        "netpolicy_true_net_value": -154.0216382869936,
+        "netpolicy_n_contacted": 197.83333333333334
+      },
+      "ipw": {
+        "pehe_pp": 2.353501406393333,
+        "qini_observed": 0.001193117954223144,
+        "qini_true_normalized": 0.43351867590344023,
+        "policy_true": 45.50580553822053,
+        "netpolicy_true_net_value": -2131.1797358545687,
+        "netpolicy_n_contacted": 1392.7
+      },
+      "oracle": {
+        "pehe_pp": 0.0,
+        "qini_observed": 0.002920641133718648,
+        "qini_true_normalized": 1.0,
+        "policy_true": 85.57141697979165,
+        "netpolicy_true_net_value": 1801.0001208476267,
+        "netpolicy_n_contacted": 812.7666666666667
+      },
+      "random": {
+        "pehe_pp": null,
+        "qini_observed": -0.00017000658342285888,
+        "qini_true_normalized": 0.003136214195944419,
+        "policy_true": 18.398003960331483
+      }
+    },
+    "headline": {
+      "description": "causal_forest vs churn-risk ranking, top 20% of test set, true effects",
+      "abs_gain_customers": {
+        "mean": 7.843293333389615,
+        "sd": 10.404100455647947,
+        "ci_low": 3.958338375802926,
+        "ci_high": 11.728248290976303,
+        "n": 30
+      },
+      "relative_gain_ratio_of_totals": {
+        "estimate": 0.1930398445014312,
+        "ci_low": 0.0964702877996052,
+        "ci_high": 0.2752156015554205,
+        "n_draws": 30
+      },
+      "median_relative_gain": {
+        "median": 0.19074500475119838,
+        "ci_low": 0.09170418996594609,
+        "ci_high": 0.3301416529400275,
+        "n_draws": 30
+      },
+      "per_draw_relative_gain": [
+        0.41012789228369173,
+        0.09635562688529564,
+        0.07572465251922966,
+        -0.24575215294338926,
+        0.5539765486267845,
+        0.5048240825389809,
+        0.08498073052565802,
+        0.19538813056858317,
+        0.12274267028221808,
+        0.08705275304659654,
+        0.48765500721408417,
+        0.29403509567682673,
+        0.5106710973437132,
+        -0.7137464533893547,
+        -0.02591454249318248,
+        0.3396831045766906,
+        0.35652013231549384,
+        0.4478283750129719,
+        0.31470874149258,
+        0.2433350632149489,
+        -0.14600628383708258,
+        0.3206002013033644,
+        0.37482561882076704,
+        0.02833777175192842,
+        0.037623720023092666,
+        0.17191193838342067,
+        0.07931670275934266,
+        0.1481821014353344,
+        0.18610187893381358,
+        0.3408307670544255
+      ],
+      "share_of_draws_uplift_wins": 0.8666666666666667
+    },
+    "observed_readout_draw0": {
+      "note": "Test-set bootstrap with frozen models: evaluation noise only.",
+      "reps": 1000,
+      "abs_gain_customers": {
+        "median": -2.0360860238476057,
+        "ci_low": -100.33248818269337,
+        "ci_high": 86.6590040036976,
+        "n": 1000
+      },
+      "uplift_incremental": {
+        "median": 91.05518709972714,
+        "ci_low": 15.240857712382944,
+        "ci_high": 166.75109415826518,
+        "n": 1000
+      },
+      "risk_incremental": {
+        "median": 94.93013990513879,
+        "ci_low": 1.6101314288176627,
+        "ci_high": 192.9980591007258,
+        "n": 1000
+      }
+    },
+    "dr_choice_counts": {
+      "causal_forest": 23,
+      "x_learner": 4,
+      "ipw": 3
+    }
+  },
+  "gates": {
+    "passed": true,
+    "checks": {
+      "srm_passed": true,
+      "balance_passed": true,
+      "ate_ci_finite": true,
+      "qini_beats_random": true,
+      "qini_beats_kmeans": true,
+      "policy_value_vs_risk": true,
+      "no_nan_metrics": true
+    }
+  },
+  "campaign": {
+    "n_offers": 1239,
+    "predicted_saved": 48.53327296744786,
+    "true_saved": 55.93365783632777,
+    "predicted_net_value": 796.5863349010822,
+    "true_net_value": 1638.0219372938302,
+    "oracle_net_value": 5920.795279704918,
+    "true_cate_sd_pp": 1.6300350091153597,
+    "customer_42": {
+      "churn_risk": 0.06335764685088652,
+      "tau_hat": -0.004766251808710812,
+      "value": 75.52,
+      "offer_cost": 2.8,
+      "net_value": -3.15994733659384,
+      "monthly_fee": 8.99
+    }
+  }
+}

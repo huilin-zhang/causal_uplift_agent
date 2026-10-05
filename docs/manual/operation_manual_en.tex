@@ -1,0 +1,313 @@
+% !TEX program = xelatex
+\documentclass[11pt]{article}
+\input{common/preamble}
+\fancyhead[L]{\small Causal Uplift Agent}
+\fancyhead[R]{\small Operation Manual}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries\color{accent} Causal Uplift Agent\par}
+\vspace{0.4cm}
+{\LARGE for Customer Retention\par}
+\vspace{1.2cm}
+{\Large Operation Manual\par}
+\vspace{0.4cm}
+{\large Install, run, check, and deploy, step by step\par}
+\vfill
+{\normalsize 2026 \quad Version 0.1\par}
+\end{titlepage}
+
+\section*{About this manual}
+This manual gets the project running on your computer and shows where to look at the results. It does not explain the methods; the \emph{Code Guide} does that. Do the steps in order the first time. The first full run needs no cloud account, no API key, no Docker, and no LLM.
+
+\tableofcontents
+\newpage
+
+\section{What you get after a run}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+Output & Where \\
+\midrule
+Simulated A/B test, current subscribers, scores, offers, memory & \file{artifacts/uplift.db} (SQLite) \\
+Experiment checks (SRM, balance, average effect) & \file{artifacts/reports/experiment.json} \\
+Benchmark of all models over 30 simulations & \file{artifacts/reports/benchmark.json} \\
+Headline numbers (the only report kept in git) & \file{artifacts/reports/benchmark_summary.json} \\
+Quality gate results & \file{artifacts/reports/gates.json} \\
+Agent brief for this month's campaign & \file{artifacts/reports/agent_report.json} \\
+Trained model & \file{artifacts/models/uplift_scorer.joblib} and MLflow \\
+MLflow runs and model registry & \file{artifacts/mlflow.db}, \file{artifacts/mlartifacts/} \\
+API & \url{http://localhost:8000} (interactive docs at \url{/docs}) \\
+Dashboard & \url{http://localhost:8501} \\
+\bottomrule
+\end{tabularx}
+
+\section{What you need}
+\begin{itemize}
+\item Python 3.11 (3.12 also works). Check with \cmd{python --version}.
+\item Git.
+\item About 2 GB of free disk space for packages, plus 1 GB if you download the public datasets.
+\item Optional: Docker Desktop (Section~\ref{op:docker}), an Anthropic API key (Section~\ref{op:llm}), TeX Live with XeLaTeX and \cmd{ctex} to rebuild these manuals.
+\end{itemize}
+
+A laptop CPU is enough. The full pipeline takes about 7 minutes; a reduced run takes about 1 minute.
+
+\section{Get the code}
+\begin{shell}
+git clone https://github.com/huilin-zhang/causal_uplift_agent.git
+cd causal_uplift_agent
+\end{shell}
+Open the whole folder in your editor (in VS Code: File, Open Folder), not a single file.
+
+\section{Create a virtual environment}
+A virtual environment keeps this project's packages separate from other projects.
+
+Windows PowerShell:
+\begin{shell}
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+\end{shell}
+macOS or Linux:
+\begin{shell}
+python3.11 -m venv .venv
+source .venv/bin/activate
+\end{shell}
+The prompt now starts with \cmd{(.venv)}.
+
+\begin{note}[Small system drive?]
+The environment and pip's download cache can live on any drive. Create the environment elsewhere (for example \texttt{python -m venv D:\textbackslash venvs\textbackslash uplift}) and set \cmd{PIP_CACHE_DIR} to a folder on the same drive before installing.
+\end{note}
+
+\section{Install the packages}
+\begin{shell}
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install --no-deps -e .
+\end{shell}
+\file{requirements.txt} pins the exact versions that produced the reported results. The second command installs the project itself so \cmd{python -m ...} works from the project folder.
+
+\section{Optional: public datasets}
+\label{op:data}
+The main results use simulated data and need nothing extra. Three public datasets show how the agent picks methods for different kinds of data. They are large and have their own licences, so they are not in the repository. Put them here:
+
+\begin{itemize}
+\item \textbf{Orange telecom churn uplift} (Verhelst et al.\ 2023). Download: \url{https://www.dropbox.com/s/27kyinnh9jcjdcg/churn_uplift_anonymized.csv?dl=0}\\
+Source page: \url{https://github.com/TheoVerhelst/Churn-Uplift-Dataset-Paper}\\
+Place at \file{data/external/orange/churn_uplift_anonymized.csv}.
+\item \textbf{Hillstrom e-mail test} (2008). Download: \url{http://www.minethatdata.com/Kevin_Hillstrom_MineThatData_E-MailAnalytics_DataMiningChallenge_2008.03.20.csv}\\
+Source page: \url{https://blog.minethatdata.com/2008/03/minethatdata-e-mail-analytics-and-data.html}\\
+Place in \file{data/external/hillstrom/} (any .csv name).
+\item \textbf{Criteo uplift v2.1} (311 MB compressed, CC BY-NC-SA 4.0). Download: \url{https://ailab.criteo.com/criteo-uplift-prediction-dataset/}\\
+Keep it anywhere and make a sample (below).
+\end{itemize}
+
+The Criteo file has 14 million rows. Make a 0.5\% sample (about 70{,}000 rows, 1.5 MB) once:
+\begin{shell}
+python -m scripts.sample_criteo --source path/to/criteo-uplift-v2.1.csv.gz --rate 0.005
+\end{shell}
+To keep the datasets somewhere else, set \cmd{UPLIFT_DATA_DIR} to that folder.
+
+\section{Run the pipeline}
+\label{op:pipeline}
+\begin{shell}
+python -m pipelines.run_pipeline
+\end{shell}
+You will see one line per step:
+\begin{plaincode}
+[generate] done in 4.7s success
+[validate] done in 0.2s success
+[analyze] done in 2.1s True
+draw 1/30 done in 13.5s
+...
+[benchmark] done in 330.5s
+[train] done in 12.7s success
+[gates] done in 0.0s passed
+[register] done in 8.1s
+[score] done in 1.2s success
+[agent] done in 2.1s
+\end{plaincode}
+
+For a quick run, use fewer simulation draws and trees. PowerShell:
+\begin{shell}
+$env:UPLIFT_DRAWS="3"; $env:UPLIFT_TREES="100"; $env:UPLIFT_BOOTSTRAP="200"
+python -m pipelines.run_pipeline
+\end{shell}
+macOS or Linux:
+\begin{shell}
+UPLIFT_DRAWS=3 UPLIFT_TREES=100 UPLIFT_BOOTSTRAP=200 python -m pipelines.run_pipeline
+\end{shell}
+To run only some steps: \cmd{python -m pipelines.run_pipeline --steps analyze,gates}.
+
+\begin{warn}[If the pipeline stops at analyze]
+The analyze step stops everything when the A/B test fails its SRM or balance check. That is on purpose: effects from a broken test are not reported.
+\end{warn}
+
+\section{Read the results}
+Open \file{artifacts/reports/benchmark_summary.json}. With the default settings (seed 0) you should see the values below, printed from the latest run when this manual was built:
+
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+Field & Value \\
+\midrule
+\cmd{experiment.srm_p} & \RsrmP{} (passes) \\
+\cmd{experiment.max_abs_smd} & \RmaxSMD{} (passes) \\
+\cmd{experiment.ate_lin_pp} & \RlinEst{} pp, CI \RlinLo{} to \RlinHi{} (\RlinSig) \\
+\cmd{benchmark.headline.median_relative_gain} & \RgainMed\%, CI \RgainMedLo\% to \RgainMedHi\% \\
+\cmd{benchmark.headline.share_of_draws_uplift_wins} & \Rwins{} of \Rdraws{} draws \\
+\cmd{gates.passed} & true \\
+\bottomrule
+\end{tabularx}
+
+Numbers can differ in the last digit on another operating system or library version. The Code Guide, Section ``Results at a glance'', explains each number.
+
+For the public datasets:
+\begin{shell}
+python -m scripts.run_real_benchmarks
+\end{shell}
+This prints, for each dataset, which estimators the selector chose and why, and the held-out Qini of each with a 95\% interval. It writes \file{artifacts/reports/real_benchmarks.json}.
+
+\section{Ask the agent}
+\begin{shell}
+python -m scripts.ask_agent "Plan this month's retention campaign." --budget 500 --trace
+python -m scripts.ask_agent "Is the A/B test valid? Check SRM and balance."
+python -m scripts.ask_agent "Should we send an offer to customer 42?"
+python -m scripts.ask_agent "Explain what the Qini coefficient measures."
+\end{shell}
+\cmd{--trace} prints which sub-agents ran. A campaign request ends with a campaign id that waits for human approval (next section).
+
+\section{Start the API}
+\label{op:api}
+\begin{shell}
+uvicorn app.api.main:app --reload
+\end{shell}
+Open \url{http://localhost:8000/docs}. Every endpoint can be tried from that page.
+
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+Endpoint & Purpose \\
+\midrule
+\cmd{GET /health} & Status, loaded model version, tables \\
+\cmd{GET /model} & Model method, metrics, which MLflow versions hold \cmd{champion} and \cmd{previous_champion} \\
+\cmd{POST /model/reload} & Load the current champion (after a rollback) \\
+\cmd{GET /experiment}, \cmd{GET /benchmark} & The saved reports \\
+\cmd{POST /uplift/score} & Score new subscribers; returns effect, risk, net value, model version \\
+\cmd{POST /policy/recommend} & Plain net-value ranking, no agent \\
+\cmd{POST /agent/run} & Full agent: question in, brief, review, and campaign id out \\
+\texttt{POST /campaigns/\{id\}/decision} & Human approval or rejection; approval logs contacts \\
+\bottomrule
+\end{tabularx}
+
+A full round trip in PowerShell:
+\begin{shell}
+$r = Invoke-RestMethod -Method Post -Uri http://localhost:8000/agent/run `
+     -ContentType "application/json" -Body '{"question":"Plan this month''s retention campaign.","budget":500}'
+$r.narrative
+Invoke-RestMethod -Method Post -Uri "http://localhost:8000/campaigns/$($r.campaign_id)/decision" `
+     -ContentType "application/json" -Body '{"reviewer":"me","approve":true}'
+\end{shell}
+After approval those customers are in a 30-day cooldown. Run the same request again and they will not appear.
+
+\section{Start the dashboard}
+In a second terminal (with the environment activated):
+\begin{shell}
+streamlit run app/ui/streamlit_app.py
+\end{shell}
+Open \url{http://localhost:8501}. The four tabs are Experiment, Benchmark, Targeting (budget slider), and Agent.
+
+\section{Quality checks}
+\begin{shell}
+ruff check .                  # lint
+pytest -q                     # 70 tests, about 1 minute (tests/ is kept locally)
+python -m pipelines.agent_eval  # 9 golden cases, must be 9/9
+\end{shell}
+The agent evaluation runs on a copy of the database, so it does not change your offers, contacts, or memory. It writes \file{artifacts/reports/agent_eval.json}.
+
+\section{MLflow: runs, versions, rollback}
+\label{op:mlflow}
+Every pipeline run is logged. To browse:
+\begin{shell}
+mlflow ui --backend-store-uri sqlite:///artifacts/mlflow.db --port 5000
+\end{shell}
+Open \url{http://localhost:5000}. Under Models, \cmd{uplift_scorer} shows the versions and the aliases \cmd{champion} and \cmd{previous_champion}. A new version gets \cmd{champion} only if all quality gates passed.
+
+Roll back to the previous champion:
+\begin{shell}
+python -m scripts.rollback_model --status   # who holds which alias
+python -m scripts.rollback_model            # swap champion and previous_champion
+\end{shell}
+Then call \cmd{POST /model/reload} or restart the API. Check \cmd{GET /health}: \cmd{model_version} shows the new champion.
+
+\section{Docker}
+\label{op:docker}
+One image runs every part.
+\begin{shell}
+docker compose build
+docker compose run --rm pipeline       # first time: builds data, model, reports
+docker compose up api ui mlflow        # serve
+\end{shell}
+API on port 8000, dashboard on 8501, MLflow on 5000. The \file{artifacts} folder is shared with your computer, so results survive container restarts.
+
+\section{Airflow (optional)}
+\file{infra/airflow/dags/uplift_pipeline.py} defines the weekly DAG \cmd{uplift_retention_weekly} (Mondays 06:00 UTC). It needs Airflow 3 with this project installed in the same environment:
+\begin{shell}
+pip install "apache-airflow>=3.0"
+export AIRFLOW__CORE__DAGS_FOLDER=$PWD/infra/airflow/dags
+airflow standalone
+\end{shell}
+Open \url{http://localhost:8080}, turn on the DAG, and trigger a run. Each task is one pipeline step; a failed SRM or balance check stops the DAG at \cmd{analyze}.
+
+\section{GitHub Actions CI}
+\file{.github/workflows/ci.yml} runs on every push to \cmd{main} and on pull requests: install, lint, tests (skipped when \file{tests/} is not in the repository), a reduced pipeline, a hard stop if any gate fails, the agent evaluation, and a rollback drill. The reports are uploaded as a build artifact.
+
+\section{Optional: LLM-written briefs}
+\label{op:llm}
+By default the agent uses fixed templates. To let Claude rephrase the brief:
+\begin{shell}
+pip install anthropic
+$env:ANTHROPIC_API_KEY="sk-ant-..."      # macOS/Linux: export ANTHROPIC_API_KEY=...
+$env:AGENT_PROVIDER="anthropic"
+python -m scripts.ask_agent "Plan this month's retention campaign."
+\end{shell}
+The model only rewrites text. If it adds a number that is not in the template, or the call fails, the template is used. \cmd{LLM_MODEL} selects another model (default \cmd{claude-opus-5-5}).
+
+\section{Rebuild the manuals}
+\begin{shell}
+python docs/tools/build_manuals.py          # extract code snippets and compile all four PDFs
+python docs/tools/build_manuals.py --check  # only check that every snippet still exists
+\end{shell}
+Needs XeLaTeX and the \cmd{ctex} package (TeX Live or MiKTeX). The build runs in a temporary folder, so cloud-sync clients do not interfere.
+
+\section{Troubleshooting}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+Problem & Fix \\
+\midrule
+\cmd{No module named app} & Run commands from the project folder, and run \cmd{pip install --no-deps -e .} \\
+LightGBM fails to load on Linux & Install the OpenMP runtime: \cmd{sudo apt-get install libgomp1} \\
+Dashboard says ``No pipeline results yet'' & Run the pipeline first (Section~\ref{op:pipeline}) \\
+\cmd{/health} shows \cmd{model_loaded: false} & No model yet, or MLflow not reachable and no local file; run the pipeline \\
+Port 8000 or 8501 already in use & \cmd{uvicorn ... --port 8001} or \cmd{streamlit run ... --server.port 8502} \\
+Pipeline is slow & Use the quick settings in Section~\ref{op:pipeline} \\
+Agent proposes zero offers & No customer has positive predicted net value; this is a correct result, not an error \\
+\cmd{run_real_benchmarks} says no datasets & Put the files in \file{data/external} (Section~\ref{op:data}) \\
+\bottomrule
+\end{tabularx}
+
+\section{Command summary}
+\begin{shell}
+pip install -r requirements.txt && pip install --no-deps -e .
+python -m pipelines.run_pipeline
+python -m scripts.ask_agent "Plan this month's retention campaign." --trace
+uvicorn app.api.main:app --reload
+streamlit run app/ui/streamlit_app.py
+ruff check . && pytest -q && python -m pipelines.agent_eval
+mlflow ui --backend-store-uri sqlite:///artifacts/mlflow.db --port 5000
+python -m scripts.rollback_model
+python -m scripts.run_real_benchmarks
+docker compose run --rm pipeline && docker compose up api ui mlflow
+python docs/tools/build_manuals.py
+\end{shell}
+
+\end{document}

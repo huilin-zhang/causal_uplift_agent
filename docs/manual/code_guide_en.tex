@@ -1,0 +1,542 @@
+% !TEX program = xelatex
+\documentclass[11pt]{article}
+\input{common/preamble}
+\fancyhead[L]{\small Causal Uplift Agent}
+\fancyhead[R]{\small Code Guide}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries\color{accent} Causal Uplift Agent\par}
+\vspace{0.4cm}
+{\LARGE for Customer Retention\par}
+\vspace{1.2cm}
+{\Large Code Guide\par}
+\vspace{0.4cm}
+{\large What each part does, why it is there, and how it works\par}
+\vfill
+{\normalsize 2026 \quad Version 0.1\par}
+\end{titlepage}
+
+\section*{How to use this guide}
+This guide explains the code. The \emph{Operation Manual} explains how to install and run it. Read that one first if you have not run the project yet.
+
+Every Python module starts with a line such as \cmd{Code guide: section "Metrics" (sec:metrics)}. That is the section of this guide that explains the module. In the other direction, every code listing here is printed from the real source file when the guide is built, with the file name and line numbers in the listing title. The build script (\file{docs/tools/build_manuals.py}) stops with an error if a function shown here no longer exists, so the guide and the code cannot drift apart.
+
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+If you want & Read \\
+\midrule
+The idea in 20 minutes & Part I \\
+How the uplift numbers are produced & Part II \\
+How the agent decides who gets an offer & Part III \\
+How it is tested, deployed, and rolled back & Part IV \\
+One customer from data to offer, and the limits & Part V \\
+\bottomrule
+\end{tabularx}
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\part{The big picture}
+
+\section{The business problem}
+A subscription company loses about 12\% of its customers every 30 days. The retention team can send an offer (a check-in message plus a 20\% discount on one monthly fee) to some customers. Offers cost money, and the budget covers only part of the base.
+
+The usual approach is to rank customers by churn risk and contact the riskiest ones. That answers the wrong question. Risk says who will leave. The team needs to know who will \emph{stay because of the offer}. Those are different people:
+
+\begin{tabularx}{\textwidth}{@{}lLL@{}}
+\toprule
+Type & Behaviour & Should we contact? \\
+\midrule
+Persuadable & Leaves without the offer, stays with it & Yes. This is the only group that pays back. \\
+Sure thing & Stays either way & No. The discount is wasted. \\
+Lost cause & Leaves either way & No. Nothing changes. \\
+Sleeping dog & Stays without contact, leaves when reminded & Never. Contact causes churn. \\
+\bottomrule
+\end{tabularx}
+
+Risk ranking puts lost causes at the top of the list and cannot see sleeping dogs. Uplift modeling estimates, for each customer, how much the offer changes their chance of churning, and ranks by that.
+
+\section{Uplift in five ideas}
+\begin{enumerate}
+\item \textbf{The effect we want is a difference of two worlds.} For customer $i$, the uplift is $\tau_i = P(\text{churn} \mid \text{no offer}) - P(\text{churn} \mid \text{offer})$. Positive means the offer helps. We never see both worlds for one person.
+\item \textbf{A randomized test makes groups comparable.} If a coin decides who gets the offer, treated and control customers are alike on average, so the difference in churn rates estimates the average effect. Before trusting it we check that the split worked (SRM) and that the groups look alike (balance).
+\item \textbf{Uplift models estimate the effect per customer} from features, using both arms of the test: T-learner, X-learner, causal forest, and an IPW (transformed outcome) learner. Section~\ref{sec:learners} explains each.
+\item \textbf{Evaluation is hard because the true effect per person is never observed.} On simulated data we know it and can measure error directly (PEHE). On real data we can only check whether high-ranked customers respond more (Qini) and how many extra customers a targeting rule keeps (policy value).
+\item \textbf{Decisions use money, not probabilities.} Net value $= \hat\tau \times \text{customer value} - \text{offer cost}$. Only positive net value earns a contact.
+\end{enumerate}
+
+\section{System map}
+The project has two halves. A batch pipeline produces trusted numbers and a model. An agent uses them to answer questions and build offer lists that a reviewer checks.
+
+\begin{plaincode}
+Batch pipeline (weekly; Airflow or one command)
+  generate -> validate -> analyze -> benchmark -> train -> gates -> register -> score -> agent
+     |           |           |            |          |        |         |          |
+  simulate    data       SRM, SMD,    30 draws:    fit     pass?    MLflow     score current
+  50K A/B     contract   ATE (Lin),   PEHE, Qini,  primary  promote  champion  subscribers
+  test                   AIPW check   policy value model    or not   alias
+
+Agent (LangGraph, on request: CLI, API, or UI)
+  router -> memory(load) -> sql -> ml -> rag -> policy -> reviewer -> save_offers -> report -> memory(save)
+                                                   ^          |
+                                                   +-- retry -+  (fixable issues, at most 2)
+  Questions about methods skip ml; questions about the test or one customer skip policy.
+\end{plaincode}
+
+\section{Repository map}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+Folder & Contents \\
+\midrule
+\file{app/core} & Settings from YAML and environment variables \\
+\file{app/data} & Simulation, SQLite store, loaders for public datasets \\
+\file{app/causal} & Experiment checks, learners, metrics, bootstrap, benchmark, selector, policy, scorer \\
+\file{app/services} & SQL access, knowledge retrieval, memory, MLflow registry \\
+\file{app/agents} & LangGraph graph and the sub-agents \\
+\file{app/api}, \file{app/ui} & FastAPI service and Streamlit dashboard \\
+\file{pipelines} & Pipeline steps, quality gates, agent evaluation \\
+\file{scripts} & Command-line helpers: ask the agent, roll back, real-data benchmark, Criteo sampling \\
+\file{configs} & \file{base.yaml} (run settings), \file{sim.yaml} (simulation settings) \\
+\file{docs/knowledge} & Short method cards the RAG agent searches \\
+\file{docs/manual} & These manuals (LaTeX sources and PDFs) \\
+\file{infra} & Dockerfile and Airflow DAG \\
+\file{evals} & Golden cases for the agent evaluation \\
+\file{artifacts} & Everything the pipeline writes (git-ignored except one summary file) \\
+\bottomrule
+\end{tabularx}
+
+\section{Results at a glance}
+\label{sec:results}
+All numbers come from one full run (\cmd{python -m pipelines.run_pipeline}, seed 0, \RnSubs{} subscribers, \Rdraws{} simulation draws). They are printed from \file{artifacts/reports/benchmark_summary.json} when the guide is built, so they always match the latest run.
+
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+Question & Answer \\
+\midrule
+Was the A/B test valid? & Yes. SRM $p = \RsrmP$ (\RnTreat{} vs \RnControl); largest $|\text{SMD}| = \RmaxSMD$. \\
+Did outreach reduce churn? & Lin-adjusted estimate \RlinEst{} pp, 95\% CI \RlinLo{} to \RlinHi{} pp (\RlinSig). The unadjusted difference was \RdimEst{} pp (CI \RdimLo{} to \RdimHi). The true simulated effect is \RtrueATE{} pp. \\
+Does uplift targeting beat risk ranking? & In \Rdraws{} simulated tests, contacting the top 20\% by causal-forest uplift kept a median \RgainMed\% more truly incremental customers than risk ranking (bootstrap 95\% CI \RgainMedLo\% to \RgainMedHi\%; ratio of totals \RgainRel\%; \RpolCf{} vs \RpolRisk{} customers per 3{,}000 contacts; uplift won \Rwins{} of \Rdraws{} draws). \\
+Could one A/B readout see that? & No. On a 15{,}000-row holdout the observed difference was \RobsGain{} customers (95\% CI \RobsGainLo{} to \RobsGainHi). \\
+Do the models get individual effects right? & Only roughly. Predicting the same effect for everyone has PEHE \RpeheConst{} pp; only the causal forest does slightly better (\RpeheCf), the X-learner (\RpeheXl) and the others do worse. The gain comes mainly from ranking, not from precise individual estimates. \\
+Which learner ranks best? & X-learner (true Qini \RqiniXl{} of the oracle), then the causal forest (\RqiniCf) and T-learner (\RqiniTl). The causal forest stays the primary model because it was named in the configuration before the benchmark ran. \\
+Does a real offer list make money? & On a new simulated cohort, the \RnOffers{} offers the agent proposed have a true net value of \RtrueNet{} dollars (predicted \RpredNet). In the benchmark, where models train on half the data, every learner's net-value policy lost money on average. Treat the cohort result as one example, not as typical. \\
+Non-random assignment & Naive difference \RobsNaive{} pp; IPW \RobsIpw; AIPW \RobsAipw{} pp (SE \RobsAipwSE), whose CI covers the true \RtrueATE. \\
+\bottomrule
+\end{tabularx}
+
+\begin{note}[What these results say]
+The simulated effect of outreach is small (\RtrueATE{} pp on a 12\% base) and varies little between customers (standard deviation \RtauSD{} pp). In that setting a 25{,}000-per-arm test has only moderate power for the average effect, and a model can rank customers usefully while still being imprecise about each one's effect. Both are common in real retention programs.
+\end{note}
+
+% =====================================================================
+\part{The causal core}
+
+\section{Configuration}
+\label{sec:config}
+All settings live in two YAML files. \file{configs/base.yaml} holds run settings: sample size, number of draws, coverage, paths, MLflow names. \file{configs/sim.yaml} holds the simulation parameters (the data-generating process). A few environment variables override YAML so CI and tests can run a smaller job without editing files.
+
+\snippet{app/core/config.py:_env_overrides}
+
+\cmd{get_settings} is cached, so every module sees the same settings in one process. Tests call \cmd{reset_settings} after changing environment variables. Relative paths are turned into absolute paths under the project root, so commands work from any folder.
+
+\section{Simulation}
+\label{sec:simulate}
+Real data never tells us the true effect for each customer, so we simulate subscribers where we do know it. That lets us measure how well each method recovers the truth.
+
+\subsection{Customers}
+Each subscriber has tenure, plan type (annual or monthly), sessions in the last 30 days, days since last login (linked to sessions), price sensitivity, payment failures, support tickets, monthly fee, and region. The distributions are plain guesses for a consumer subscription product.
+
+\subsection{Churn without the offer}
+Churn risk is a logistic function of a risk index (fewer sessions, longer since login, short tenure, monthly plan, failures, tickets, and price sensitivity all raise it) plus an unobserved noise term. The intercept is solved by bisection so that the average churn rate without the offer is exactly 12\%. That sets the base rate only. It does not touch the effect.
+
+\snippet{app/data/simulate.py:solve_intercept}
+
+\subsection{The effect of the offer}
+The offer removes a share $r(x)$ of a customer's churn risk, so $\tau(x) = \mu_0(x) \cdot r(x)$. The share comes from three stories:
+
+\snippet{app/data/simulate.py:relative_effect}
+
+\begin{itemize}
+\item \textbf{Persuadables}: price-sensitive monthly customers whose last login was 7 to 30 days ago. The discount reaches them while they are drifting and removes up to 35\% of their churn risk.
+\item \textbf{Lost causes}: no login for 45 days or more. The effect is zero.
+\item \textbf{Sleeping dogs}: annual customers with more than 24 months of tenure who barely use the product. The message reminds them they are paying, and their churn goes up by up to 15\%.
+\end{itemize}
+
+Because the risk includes unobserved noise, the true effect given the observed features averages over that noise. The code does this with Gauss--Hermite quadrature (\cmd{expected_mu0}) so \cmd{true_cate} is exactly $E[\tau \mid x]$, the quantity a model can learn.
+
+\subsection{Assignment, outcome, value}
+\snippet{app/data/simulate.py:simulate}
+
+In the randomized design every customer gets an independent coin flip with probability 0.5, so the arm sizes vary slightly and the SRM test has something to check. In the observational design, reps contact risky customers more often; that makes the naive comparison badly biased and gives the IPW and AIPW estimators a real job.
+
+Customer value is 70\% margin on twelve monthly fees (about \$75 to \$151). Offer cost is \$1 contact plus 20\% of one fee (about \$2.80 to \$4.60). An offer pays back only when the effect is above roughly 3.3 percentage points, which very few customers reach.
+
+Columns that exist only because the data is simulated (\cmd{true_mu0}, \cmd{true_cate}, \cmd{true_propensity}) are kept out of every table the agent can read.
+
+\section{Data store}
+\label{sec:store}
+One SQLite file (\file{artifacts/uplift.db}) holds the experiment, the current subscribers, scores, pending offers, contact history, and agent memory. SQLite needs no server and ships with Python. Reads that come from the agent go through a read-only connection, so even a query that slipped past the SQL checks could not change data:
+
+\snippet{app/data/store.py:Store.query}
+
+\section{Experiment analysis}
+\label{sec:experiment}
+The order of checks matters. If the split is broken or the groups differ before treatment, no effect estimate can be trusted, so the pipeline stops there.
+
+\subsection{Sample ratio mismatch}
+\snippet{app/causal/experiment.py:srm_test}
+A chi-square test compares the arm sizes with the planned share (from \file{sim.yaml}, not hard-coded). The industry convention is to alert at $p < 0.001$; a mismatch usually means a logging or assignment bug.
+
+\subsection{Covariate balance}
+\snippet{app/causal/experiment.py:standardized_mean_diff}
+SMD divides the difference in means by the pooled standard deviation. Unlike a t-test it does not shrink with sample size, so it measures whether a gap is large enough to matter. All $|\text{SMD}| < 0.1$ passes.
+
+\subsection{Average effect}
+Two estimators are reported. The Lin (2013) regression adjustment was chosen \emph{before} looking at results as the primary one. It regresses churn on treatment, centered covariates, and their interactions, with HC2 robust standard errors. In a randomized test it stays consistent and usually narrows the interval. The plain difference in means with a Neyman standard error is reported beside it.
+
+\snippet{app/causal/experiment.py:ate_lin_adjusted}
+
+\begin{warn}[Which estimate is the headline]
+The Lin estimate (\RlinEst{} pp, \RlinSig) is the headline because it was chosen in advance; the difference in means (\RdimEst{} pp) is reported beside it. Picking whichever number looks better after the fact would be cherry-picking. The two differ by less than one standard error. Power matters here: with 12\% base churn and 25{,}000 per arm, the smallest effect the test detects with 80\% power is about 0.8 pp, so an effect near 0.6 pp reaches significance in only about half of such tests.
+\end{warn}
+
+\subsection{When assignment is not random}
+On the observational variant the pipeline compares three estimates with the truth. Cross-fitted AIPW combines a propensity model and two outcome models; it stays unbiased if either part is right.
+
+\snippet{app/causal/experiment.py:aipw_ate}
+
+An earlier version reused the heavily regularized LightGBM settings from the uplift learners for the propensity model. Those settings pull $\hat e(x)$ toward 0.5, so the rare high-risk control customers got about half their correct weight, and AIPW missed the truth by about four standard errors. The weighted balance check showed it (max SMD 0.16 after weighting). Fitting the propensity with plain logistic regression, chosen for how well it predicts treatment, brought the weighted max SMD to \RsmdAfter{} and the estimate to \RobsAipw{} pp (SE \RobsAipwSE), whose CI covers the true \RtrueATE{} pp. A slight negative lean remains because the logistic model is not exactly the true assignment rule; it is reported as it is.
+
+\section{Uplift learners}
+\label{sec:learners}
+Every learner has the same interface: \cmd{fit(x, t, y)} with $y$ = churn, and \cmd{predict(x)} returning the predicted churn \emph{reduction}. A larger score always means ``contact this customer''.
+
+\subsection{Baselines}
+\textbf{Churn risk} is trained on the control arm only, so it predicts churn without an offer. It is the status quo the uplift models must beat.
+
+\textbf{k-means segments} cluster customers on standardized features and give everyone in a cluster that cluster's A/B difference:
+\snippet{app/causal/learners.py:KMeansUplift}
+
+\textbf{Constant ATE} gives every customer the same effect. It cannot rank anyone, but it is the right yardstick for PEHE: a learner that cannot beat it has not found real differences between customers.
+
+\subsection{T-learner}
+Two classifiers, one per arm; the uplift is the difference of their predictions. Simple, but each model sees half the data and their errors do not cancel.
+
+\subsection{X-learner}
+\snippet{app/causal/learners.py:XLearner}
+The X-learner (K\"unzel et al.\ 2019) first fits the two outcome models, then imputes an effect for every customer from the \emph{other} arm's model, regresses those imputed effects on features, and blends the two effect models with the propensity. It helps most when arms are unbalanced. In this project it ranked best (Section~\ref{sec:results}).
+
+\subsection{Causal forest}
+\snippet{app/causal/learners.py:CausalForest}
+econml's \cmd{CausalForestDML} removes what the features predict about churn and about treatment (double machine learning), then grows honest trees that split where the effect differs. In a randomized test the propensity is a known constant, so a \cmd{DummyClassifier} with the class prior is the exact model for it.
+
+\subsection{IPW learner}
+\snippet{app/causal/learners.py:IPWLearner}
+The transformed outcome $Y^* = y(t - e)/(e(1-e))$ has expected value equal to the effect, so any regressor fit to $Y^*$ estimates uplift. It is unbiased but very noisy, since every churner becomes $\pm 2$ when $e = 0.5$.
+
+\subsection{Regularization}
+The true effect varies by only about 1.5 pp between customers. With default tree settings the first version of the T-learner, X-learner, and IPW had PEHE of 4.6 to 7.6 pp, far worse than predicting zero. The fix was principled rather than tuned to a number: small, shallow trees, and a four-point grid chosen per learner by the doubly robust loss on validation data (Section~\ref{sec:benchmark}), which needs no true effect.
+
+\snippet{app/causal/learners.py:GRID}
+
+\section{Metrics}
+\label{sec:metrics}
+
+\subsection{PEHE}
+Root mean squared error between estimated and true effect. Only possible on simulated data.
+
+\subsection{Qini}
+Sort customers by score. For the top $k$, the Qini curve counts extra retained customers: treated retained minus control retained, with the control count rescaled to the treated group size.
+\snippet{app/causal/metrics.py:qini_curve}
+The Qini coefficient is the average gap between that curve and the straight line of random targeting, divided by the number of treated customers.
+
+\subsection{True Qini}
+With simulated data the same idea can use the true effects instead of noisy outcomes: $G(k)$ is the sum of true $\tau$ over the top $k$. The normalized version divides by the value for a perfect ranking, so 1 is perfect, 0 is random, and it can go negative.
+\snippet{app/causal/metrics.py:true_qini}
+
+\subsection{Ties}
+k-means gives only eight distinct scores, so large groups of customers are tied. Breaking ties in row order would make results depend on how the file is sorted. The curves instead take the expected value under random tie-breaking: inside each tie group the cumulative curve is a straight line between the group's start and end.
+\snippet{app/causal/metrics.py:_interpolate_ties}
+
+\subsection{Doubly robust score}
+\snippet{app/causal/metrics.py:dr_pseudo_outcome}
+$E[\varphi \mid x]$ equals the true effect when either the outcome models or the propensity is right; in a randomized test the propensity is known, so it is always right. The DR loss $\text{mean}((\varphi - \hat\tau)^2)$ equals PEHE$^2$ plus a constant that is the same for every model, so it ranks models the way PEHE would, without knowing $\tau$.
+
+\section{Bootstrap}
+\label{sec:bootstrap}
+The bootstrap answers one narrow question: if we had drawn a different test set of the same size, how much would the observed comparison move? Models stay frozen; only test rows are resampled, separately inside each arm so arm sizes stay fixed.
+\snippet{app/causal/bootstrap.py:stratified_weights}
+The result is a matrix of resample counts, so each replicate's incremental retention is a matrix product rather than a Python loop:
+\snippet{app/causal/bootstrap.py:incremental_retained}
+
+\begin{warn}[A mistake that was fixed]
+The first version pooled bootstrap replicates from five overlapping train/test splits and reported the median of the ratio $(I_\text{uplift} - I_\text{risk})/|I_\text{risk}|$. That pooled set does not estimate anything well defined, and the ratio explodes when $I_\text{risk}$ is near zero (the interval ran from $-354\%$ to $+1382\%$). The current version reports the absolute gain for the observed readout and takes the headline from independent simulation draws.
+\end{warn}
+
+\section{Benchmark}
+\label{sec:benchmark}
+For each of 30 draws the benchmark simulates a fresh set of 50{,}000 subscribers, splits it 50/20/30 into train, validation, and test, fits all models on train, and scores the test set.
+
+\snippet{app/causal/benchmark.py:fit_models}
+
+The primary model (causal forest) is named in \file{base.yaml} before any run, so the headline involves no data-driven choice. A secondary choice by validation DR loss, with a one-standard-error rule that falls back to the primary, is reported beside it (counts over draws: \RdrChoices).
+
+The headline compares true policy value at 20\% coverage across draws. Because the draws are independent, their spread is a valid measure of uncertainty that includes training and test noise. For each draw the relative gain is the primary model's true policy value divided by the risk ranking's, minus one. The headline is the median of these per-draw gains with a bootstrap interval from resampling draws. The ratio is stable because the risk ranking's true value is always well above zero. A ratio of totals is reported beside it:
+\snippet{app/causal/benchmark.py:median_with_ci}
+\snippet{app/causal/benchmark.py:ratio_of_totals}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+Model & PEHE (pp) & True Qini (norm.) & Policy value at 20\% & Net-value policy (\$) \\
+\midrule
+Churn risk & -- & \RqiniRisk & \RpolRisk & -- \\
+k-means & \RpeheKmeans & \RqiniKmeans & \RpolKmeans & \RnetKmeans \\
+Constant ATE & \RpeheConst & \RqiniConst & \RpolConst & \RnetConst \\
+T-learner & \RpeheTl & \RqiniTl & \RpolTl & \RnetTl \\
+X-learner & \RpeheXl & \RqiniXl & \RpolXl & \RnetXl \\
+Causal forest & \RpeheCf & \RqiniCf & \RpolCf & \RnetCf \\
+IPW & \RpeheIpw & \RqiniIpw & \RpolIpw & \RnetIpw \\
+Oracle (true $\tau$) & 0 & 1.00 & \RpolOracle & \RnetOracle \\
+Random & -- & \RqiniRandom & \RpolRandom & -- \\
+\bottomrule
+\end{tabular}
+\caption{Means over \Rdraws{} draws. Policy value is extra customers kept per 3{,}000 contacts. The net-value policy contacts only customers with positive predicted net value and reports their true net value.}
+\end{table}
+
+\section{Estimator selector}
+\label{sec:selector}
+The same workflow should behave sensibly on data that looks different. \cmd{profile_data} records the facts that matter; \cmd{select} applies written rules, each with its reason, so the agent can explain the choice and the reviewer can check it.
+\snippet{app/causal/selector.py:select}
+
+Whether assignment was randomized cannot be read off the data, so \cmd{design} is passed in by whoever owns the data. Section~\ref{sec:real} shows the rules on three public datasets.
+
+\section{Targeting policy}
+\label{sec:policy}
+\snippet{app/causal/policy.py:rank_by_net_value}
+Customers with $\hat\tau \le 0$ never get an offer, however risky they are. When fewer customers have positive net value than the budget allows, fewer offers go out; spending the whole budget is not a goal.
+
+\section{Real datasets}
+\label{sec:real}
+Three public uplift datasets exercise the selector. They are not in the repository; the Operation Manual says how to download them. Each loader maps its file to the same format, with the outcome we want more of called \cmd{good} (retained, visited).
+\snippet{scripts/run_real_benchmarks.py:evaluate}
+
+\begin{tabularx}{\textwidth}{@{}lLL@{}}
+\toprule
+Dataset & What the selector chose and why & Held-out Qini (95\% CI) \\
+\midrule
+Orange telecom churn (Verhelst et al.\ 2023), 11{,}896 rows, 76\% treated, 3.4\% churn & X-learner, causal forest, IPW; T-learner dropped for the rare outcome; rank by effect (no value data) & No model beats random; every interval includes 0 \\
+Hillstrom e-mail (2008), 64{,}000 rows, 3 arms & All four learners, one model per arm against control & Womens e-mail: causal forest $+0.0072$ ($+0.0041$, $+0.0101$), X-learner $+0.0072$, T-learner $+0.0066$. Mens e-mail: none beats random \\
+Criteo ads (Diemert et al.\ 2018), 70{,}086-row sample of 13.98M, 85\% treated & Size of the full table drops the forest; rare outcome drops the T-learner; X-learner and IPW & X-learner $+0.0032$ ($-0.0001$, $+0.0062$), borderline \\
+\bottomrule
+\end{tabularx}
+
+\section{Scorer bundle}
+\label{sec:scorer}
+Serving and the agent never need to know which learner is inside the model. They call one method:
+\snippet{app/causal/scorer.py:UpliftScorer.score}
+The bundle is saved with joblib and logged to MLflow together with hashes of the training data and the configuration.
+
+% =====================================================================
+\part{The agent system}
+
+\section{Agent state}
+\label{sec:state}
+LangGraph passes one dictionary from node to node. Each node returns only the keys it changes. Services (database, SQL, knowledge base, memory, model) are built once per run and injected, so tests can swap in a copy of the database.
+\snippet{app/agents/state.py:Deps}
+
+\section{Agent graph}
+\label{sec:graph}
+\snippet{app/agents/graph.py:build_graph}
+The conditional edges encode the routing. A method question goes straight from SQL to retrieval to the report. A campaign request goes through policy and review. After review, a pass saves the list as pending; fixable problems send the list back to the policy agent (at most twice); blocking problems end the run with an explanation.
+\snippet{app/agents/graph.py:after_review}
+
+\section{Memory agent}
+\label{sec:memory-agent}
+At the start of a run the memory agent loads recent runs, reviewer feedback, and the cooldown list (customers contacted in the last 30 days). Reviewer exclusions from earlier campaigns become exclusions for this one. At the end it saves a short summary of the run.
+\snippet{app/agents/memory_agent.py:load_memory}
+
+\section{SQL agent}
+\label{sec:sql-agent}
+\snippet{app/agents/sql_agent.py:run_sql_agent}
+Each intent maps to named queries. Parameters are bound by the driver, never pasted into SQL text.
+
+\section{ML agent}
+\label{sec:ml-agent}
+\snippet{app/agents/ml_agent.py:run_ml_agent}
+The ML agent does not train models during a request; training belongs to the scheduled pipeline. It reads the experiment report, profiles the data, runs the selector, and attaches the champion model's version and benchmark headline.
+
+\section{RAG agent}
+\label{sec:rag-agent}
+\snippet{app/agents/rag_agent.py:run_rag_agent}
+The search query combines the question with what the ML agent found (the chosen estimator and any warnings), so the cited rules match the situation. Every hit carries its file and heading.
+
+\section{Policy agent}
+\label{sec:policy-agent}
+\snippet{app/agents/policy_agent.py:run_policy_agent}
+Exclusions come from three places: the cooldown list, earlier reviewer feedback, and constraints the reviewer added in this run.
+
+\section{Reviewer agent}
+\label{sec:reviewer}
+\snippet{app/agents/reviewer_agent.py:review}
+Blocking problems mean the evidence cannot be trusted: a failed SRM or balance check, an estimator the selector did not allow, or a model that ranks no better than random. Fixable problems concern individual offers: negative effect, negative net value, cooldown, duplicates, or too many offers. A human still approves every list through the API (Section~\ref{sec:api}).
+
+\section{Report}
+\label{sec:report}
+\snippet{app/agents/report.py:run_report}
+The brief is built from a template that uses only numbers from the state. An optional LLM may rephrase it.
+
+\section{Providers}
+\label{sec:providers}
+The deterministic provider uses keyword rules for routing and the template for text, so tests and CI need no network. The optional Claude provider only rewrites the narrative, and any number it writes must already appear in the template:
+\snippet{app/agents/providers.py:numbers_match}
+\snippet{app/agents/providers.py:ClaudeProvider.narrate}
+If the model refuses, adds a number, or the SDK is missing, the template text is used.
+
+\section{SQL service}
+\label{sec:sql}
+\snippet{app/services/sql_service.py:check_sql}
+Free-form SQL (only from an optional LLM path) must be one SELECT without write keywords, and then runs on a read-only connection. The tests try \cmd{DROP}, stacked statements, \cmd{UPDATE}, and \cmd{PRAGMA}.
+
+\section{Knowledge retrieval}
+\label{sec:rag}
+\snippet{app/services/knowledge.py:KnowledgeBase.search}
+The knowledge base is eight short markdown cards in \file{docs/knowledge}, split at \cmd{\#\#} headings. TF-IDF with cosine similarity is enough for a few dozen chunks and needs no embedding model.
+
+\section{Memory}
+\label{sec:memory}
+\snippet{app/services/memory.py:MemoryService.recently_contacted}
+Contacts are logged only after a human approves a campaign. That keeps the cooldown honest: a list that was rejected does not block those customers next month.
+
+% =====================================================================
+\part{Engineering}
+
+\section{Pipeline}
+\label{sec:pipeline}
+Each step is a plain function, so the command line, the tests, and Airflow run the same code.
+\snippet{pipelines/run_pipeline.py:step_generate}
+\snippet{pipelines/run_pipeline.py:step_analyze}
+\cmd{step_analyze} raises an error when the test fails SRM or balance, which stops every later step.
+
+\section{Quality gates}
+\label{sec:gates}
+\snippet{pipelines/gates.py:evaluate_gates}
+These are sanity checks written before the first full run, not significance tests and not targets chosen after seeing results. The policy-value gate compares means over draws. A stricter rule (the lower bound of the gain CI above zero) would also pass today (\RgainAbsLo{} customers), but it is not used as a gate.
+
+\section{MLflow registry}
+\label{sec:registry}
+\snippet{app/services/registry.py:log_and_register}
+Every run is logged with its parameters, metrics, the scorer file, and the benchmark report. A new version becomes \cmd{champion} only if the gates passed; the old champion keeps the alias \cmd{previous_champion}. Rollback swaps the two aliases:
+\snippet{app/services/registry.py:rollback}
+Serving loads \cmd{models:/uplift_scorer@champion} and falls back to the local file when MLflow is unreachable. Every API response that depends on a model reports the version.
+
+\section{API}
+\label{sec:api}
+The FastAPI service exposes health, model information, reload, experiment and benchmark reports, scoring, a plain ranking, the full agent, and campaign decisions. The decision endpoint is the human step:
+\snippet{app/api/main.py:campaign_decision}
+
+\section{UI}
+\label{sec:ui}
+\file{app/ui/streamlit_app.py} has four tabs. \emph{Experiment} shows SRM, balance, both ATE estimates, and the observational comparison. \emph{Benchmark} shows the headline, the metric table, and Qini curves (observed or true). \emph{Targeting} has a budget slider that compares the uplift list with a risk list of the same size. \emph{Agent} runs the graph and shows the brief, the review, and the trace.
+
+\section{Docker}
+\label{sec:docker}
+One image serves the API, the UI, the pipeline job, and an MLflow server. Dependencies are installed before the code is copied, so editing code does not reinstall packages.
+\lstinputlisting[language=bash,numbers=none,title={\texttt{infra/docker/Dockerfile}}]{../../infra/docker/Dockerfile}
+
+\section{Airflow}
+\label{sec:airflow}
+\snippet{infra/airflow/dags/uplift_pipeline.py:uplift_retention_weekly}
+The DAG runs every Monday. Each task calls one pipeline step, so the DAG holds no logic of its own and can be tested by running the steps directly.
+
+\section{CI}
+\label{sec:ci}
+\lstinputlisting[language=bash,numbers=none,title={\texttt{.github/workflows/ci.yml}}]{../../.github/workflows/ci.yml}
+CI runs lint, tests, a smaller pipeline (3 draws, 100 trees), fails on any gate, runs the agent evaluation, and practices a rollback. Locally the suite has 70 tests; the test folder is kept out of the public repository by choice, so on GitHub that step reports that it was skipped.
+
+\section{Agent evaluation}
+\label{sec:eval}
+Nine golden cases in \file{evals/golden_cases.json} cover campaigns at two budgets, the experiment question, two method questions, a customer lookup, the cooldown after an approved campaign, and two injected failures the reviewer must catch. Each case runs against a copy of the database, so evaluation never changes real offers or memory.
+\snippet{pipelines/agent_eval.py:check}
+One check uses the simulation's hidden truth: the customers the agent picks must have a higher true effect than the average current subscriber.
+
+% =====================================================================
+\part{Putting it together}
+
+\section{One customer's journey}
+Take customer 42 in the current cohort, who pays \$\RexFee{} a month (value \$\RexValue, offer cost \$\RexCost).
+\begin{enumerate}
+\item The pipeline scores the cohort with the champion causal forest: churn risk \RexRisk\%, predicted churn reduction \RexTau{} pp.
+\item Net value $=$ predicted reduction $\times$ value $-$ cost $=$ \RexNet{} dollars.
+\item The policy agent only considers customers with a positive predicted effect and positive net value.
+\item Asked directly (\cmd{python -m scripts.ask_agent "Should we send an offer to customer 42?"}), the agent routes to the customer path, looks up the score, retrieves the offer rules, and answers ``\RexDecision''.
+\end{enumerate}
+
+\section{Limits and next steps}
+\begin{itemize}
+\item \textbf{Everything rests on a simulator.} The 30-draw interval covers noise inside this simulator, not doubt about whether the simulator resembles a real business. The real-data results are weaker and mixed.
+\item \textbf{Individual effects are not well estimated.} Use the scores to rank, not as precise per-customer promises.
+\item \textbf{Net value is fragile.} With models trained on 25{,}000 rows the net-value policy lost money on average; with 50{,}000 rows one cohort made \RtrueNet{} dollars. A larger test, a cheaper offer, or a better-targeted segment would change the economics.
+\item \textbf{Next}: doubly robust learners (DR-learner), calibration of $\hat\tau$ by decile, Thompson-style budget pacing, and a holdout A/B test of the uplift policy itself (the only way to confirm the gain on real customers).
+\end{itemize}
+
+\section{Self-check questions}
+\begin{enumerate}
+\item Why does ranking by churn risk send offers to lost causes? \emph{Answer: high risk without the offer says nothing about whether the offer changes the outcome; lost causes have the highest risk and zero effect.}
+\item Why is the Lin estimate the headline rather than the difference in means? \emph{Answer: it was chosen in advance; picking whichever looks better afterwards is cherry-picking.}
+\item Can Qini be computed on real data? PEHE? \emph{Answer: Qini yes, it uses observed outcomes; PEHE no, it needs the true effect.}
+\item Why does the DR loss rank models like PEHE? \emph{Answer: its expectation is PEHE$^2$ plus a constant shared by all models.}
+\item What does the bootstrap interval of the observed readout leave out? \emph{Answer: training noise and model selection; models are frozen.}
+\item Why are contacts logged only after approval? \emph{Answer: so a rejected list does not put customers into cooldown.}
+\end{enumerate}
+
+\appendix
+\section{Glossary}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+ATE & Average treatment effect: the mean effect over all customers. \\
+CATE, uplift, $\tau(x)$ & Conditional average treatment effect: the effect for customers with features $x$. \\
+SRM & Sample ratio mismatch: arm sizes differ from the plan. \\
+SMD & Standardized mean difference between arms for one feature. \\
+Propensity $e(x)$ & Probability of receiving the offer given features. \\
+IPW / AIPW & (Augmented) inverse probability weighting. AIPW is doubly robust. \\
+PEHE & Root mean squared error of the estimated effect. \\
+Qini & Ranking metric: extra outcomes from targeting the top $k$ versus random. \\
+Policy value & Extra customers kept by a targeting rule. \\
+Net value & $\hat\tau \times$ value $-$ cost. \\
+pp & Percentage points. \\
+\bottomrule
+\end{tabularx}
+
+\section{References}
+\begin{itemize}
+\item Athey, S., Tibshirani, J., Wager, S. (2019). Generalized random forests. \emph{Annals of Statistics}.
+\item Athey, S., Imbens, G. (2016). Recursive partitioning for heterogeneous causal effects. \emph{PNAS}.
+\item K\"unzel, S., Sekhon, J., Bickel, P., Yu, B. (2019). Metalearners for estimating heterogeneous treatment effects using machine learning. \emph{PNAS}.
+\item Lin, W. (2013). Agnostic notes on regression adjustments to experimental data. \emph{Annals of Applied Statistics}.
+\item Radcliffe, N. (2007). Using control groups to target on predicted lift. \emph{Direct Marketing Analytics Journal}.
+\item Kennedy, E. (2023). Towards optimal doubly robust estimation of heterogeneous causal effects. \emph{Electronic Journal of Statistics}.
+\item Kohavi, R., Tang, D., Xu, Y. (2020). \emph{Trustworthy Online Controlled Experiments}. Cambridge University Press (SRM).
+\item Diemert, E., Betlei, A., Renaudin, C., Amini, M.-R. (2018). A large scale benchmark for uplift modeling. \emph{AdKDD}.
+\item Hillstrom, K. (2008). MineThatData E-Mail Analytics and Data Mining Challenge.
+\item Verhelst, T., et al.\ (2023). A churn prediction dataset from the telecom sector: a new benchmark for uplift modeling.
+\end{itemize}
+
+\section{Commands}
+\begin{shell}
+python -m pipelines.run_pipeline                       # full run (about 7 minutes)
+python -m pipelines.run_pipeline --steps analyze,gates # selected steps
+python -m scripts.ask_agent "Plan this month's retention campaign." --trace
+python -m scripts.run_real_benchmarks                  # needs data/external
+python -m scripts.rollback_model --status
+python -m pipelines.agent_eval
+python docs/tools/build_manuals.py
+\end{shell}
+
+\end{document}

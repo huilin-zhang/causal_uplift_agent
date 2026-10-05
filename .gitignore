@@ -1,0 +1,44 @@
+# Python and tooling
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.env
+
+# Everything the pipeline generates can be rebuilt with `python -m pipelines.run_pipeline`.
+# Keep only the small summary report that the README quotes.
+artifacts/**
+!artifacts/reports/
+!artifacts/reports/benchmark_summary.json
+mlruns/
+mlartifacts/
+*.db
+
+# External datasets: large and under their own licences. Download per the manual.
+data/external/
+*.csv.gz
+*.parquet
+
+# LaTeX build files (the compiled PDFs are kept)
+docs/manual/**/*.aux
+docs/manual/**/*.log
+docs/manual/**/*.out
+docs/manual/**/*.toc
+docs/manual/**/*.fls
+docs/manual/**/*.fdb_latexmk
+docs/manual/**/*.xdv
+docs/manual/**/*.synctex*
+docs/manual/**/*latex*.fls
+docs/manual/**/_minted*/
+docs/manual/generated/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json

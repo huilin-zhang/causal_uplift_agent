@@ -1,0 +1,22 @@
+[
+  {"id": "campaign_default", "question": "Plan this month's retention campaign.", "budget": 2000,
+   "expect": {"intent": "campaign", "review_passed": true, "offers_valid": true, "within_budget": true,
+              "beats_population_true_effect": true, "narrative_has": ["SRM", "Offer list"]}},
+  {"id": "campaign_small_budget", "question": "We can only afford 50 offers this month. Who should get them?", "budget": 50,
+   "expect": {"intent": "campaign", "review_passed": true, "offers_valid": true, "within_budget": true}},
+  {"id": "experiment_check", "question": "Is the A/B test valid? Check SRM and balance.",
+   "expect": {"intent": "experiment", "narrative_has": ["SRM", "SMD", "Lin-adjusted"]}},
+  {"id": "method_qini", "question": "Explain what the Qini coefficient measures.",
+   "expect": {"intent": "method", "citation_has": "evaluation_metrics.md"}},
+  {"id": "method_sleeping_dogs", "question": "Why not rank customers by churn risk?",
+   "expect": {"intent": "method", "citation_has": "targeting_policy.md"}},
+  {"id": "customer_lookup", "question": "Should we send an offer to customer 42?",
+   "expect": {"intent": "customer", "narrative_has": ["Customer 42", "Recommendation"]}},
+  {"id": "cooldown_respected", "question": "Plan this month's retention campaign.", "budget": 2000,
+   "setup": "approve_previous_campaign",
+   "expect": {"intent": "campaign", "review_passed": true, "no_recent_contacts": true}},
+  {"id": "reviewer_blocks_bad_offers", "inject": "sleeping_dog_offer",
+   "expect": {"review_passed": false, "fixable_issue": "predicted effect <= 0"}},
+  {"id": "reviewer_blocks_broken_test", "inject": "srm_failure",
+   "expect": {"review_passed": false, "blocking_issue": "SRM"}}
+]

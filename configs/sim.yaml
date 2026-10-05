@@ -1,0 +1,20 @@
+# Simulation parameters (the data-generating process). See code guide,
+# section "Simulation". Every reported number is what the code produces
+# from these settings.
+
+base_churn_rate: 0.12           # mean 30-day churn without outreach
+persuadable_effect: 0.35        # max share of churn risk a 20% discount removes for persuadables
+sleeping_dog_effect: 0.15       # max relative churn increase for sleeping dogs
+risk_noise_sd: 0.5              # unobserved part of churn risk
+treat_share: 0.5                # randomized arm share
+
+# Customer value and offer cost
+margin: 0.7                     # gross margin on the monthly fee
+value_months: 12                # months of fee we count as value of a saved customer
+contact_cost: 1.0               # dollars per outreach
+discount_share: 0.2             # discount as share of one monthly fee
+
+# Observational variant (reps target risky customers)
+obs_intercept: -1.0
+obs_risk_slope: 1.5
+propensity_clip: [0.05, 0.95]
