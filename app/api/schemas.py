@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.agents.contracts import PolicyTargets
+
 
 class Subscriber(BaseModel):
     customer_id: int
@@ -46,6 +48,7 @@ class RecommendRequest(BaseModel):
 class AgentRequest(BaseModel):
     question: str = Field(min_length=3, max_length=500)
     budget: int | None = Field(default=None, gt=0, le=50_000)
+    policy_targets: PolicyTargets | None = None
 
 
 class AgentResponse(BaseModel):
@@ -57,6 +60,10 @@ class AgentResponse(BaseModel):
     trace: list[str]
     provider: str
     model_version: str | None = None
+    policy_targets: dict[str, Any] | None = None
+    plan: dict[str, Any] | None = None
+    messages: list[dict[str, Any]] | None = None
+    opportunities: dict[str, Any] | None = None
 
 
 class ApproveRequest(BaseModel):
@@ -64,3 +71,13 @@ class ApproveRequest(BaseModel):
     approve: bool
     exclude_ids: list[int] = []
     note: str = ""
+
+
+class CampaignOutcome(BaseModel):
+    customer_id: int
+    churn_30d: int = Field(ge=0, le=1, strict=True)
+
+
+class EvaluationRequest(BaseModel):
+    outcomes: list[CampaignOutcome] = Field(min_length=4)
+    outcome_window_complete: bool = False

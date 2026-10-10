@@ -61,3 +61,12 @@ class MemoryService:
                 "SELECT DISTINCT customer_id FROM contacts WHERE contacted_at >= ?", (since,)
             ).fetchall()
         return {int(r[0]) for r in rows}
+
+    def contact_limit_ids(self, limit: int, now: datetime | None = None) -> set[int]:
+        since = ((now or utc_now()) - timedelta(days=7)).isoformat()
+        with self.store.connect(read_only=True) as conn:
+            rows = conn.execute(
+                "SELECT customer_id FROM contacts WHERE contacted_at >= ? "
+                "GROUP BY customer_id HAVING COUNT(*) >= ?", (since, limit),
+            ).fetchall()
+        return {int(row[0]) for row in rows}

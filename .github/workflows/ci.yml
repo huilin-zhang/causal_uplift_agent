@@ -31,6 +31,8 @@ jobs:
           pip install --no-deps -e .
       - name: Lint
         run: ruff check .
+      - name: Canonical workflow and agent overview
+        run: python docs/tools/sync_agent_overview.py --check
       - name: Unit and integration tests (skipped when tests/ is not in the repo)
         run: if [ -d tests ]; then pytest -q; else echo "tests/ not in repository; skipping"; fi
       - name: Pipeline with quality gates (Qini, policy value, experiment checks)

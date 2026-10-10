@@ -20,6 +20,9 @@ def review(state: AgentState, settings: dict) -> dict:
     exp = state.get("experiment") or {}
     exp_cfg = settings["experiment"]
 
+    if exp.get("valid") is False:
+        blocking.append("Experiment validity checks failed")
+
     if exp.get("srm_p", 1.0) < exp_cfg["srm_alpha"]:
         blocking.append(f"SRM: arm sizes differ from the plan (p = {exp['srm_p']:.2g})")
     if exp.get("max_abs_smd", 0.0) >= exp_cfg["smd_threshold"]:
@@ -51,7 +54,7 @@ def review(state: AgentState, settings: dict) -> dict:
         if cid in seen:
             fixable.append(f"customer {cid}: listed twice")
         seen.add(cid)
-    budget = int(state.get("budget") or settings["agent"]["default_budget"])
+    budget = int(state.get("budget", settings["agent"]["default_budget"]))
     if len(offers) > budget:
         fixable.append(f"{len(offers)} offers exceed the budget of {budget}")
 

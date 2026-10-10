@@ -20,6 +20,14 @@ class AgentState(TypedDict, total=False):
     question: str
     budget: int
     customer_id: int | None
+    policy_targets: dict[str, Any]
+    targeting: dict[str, Any]
+    uplift_table: list[dict[str, Any]]
+    opportunities: dict[str, Any]
+    plan: dict[str, Any]
+    messages: list[dict[str, Any]]
+    evaluation: dict[str, Any]
+    chat_context: dict[str, Any]
     # Router
     intent: str                     # campaign | experiment | method | customer
     # Memory agent

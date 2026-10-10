@@ -17,8 +17,11 @@ from typing import Any
 
 INTENT_RULES = [
     ("customer", re.compile(r"\bcustomer\s*#?\s*\d+", re.I)),
+    ("campaign", re.compile(r"^\s*(?:please\s+)?(plan|create|build|draft)\b.*\b(campaign|promotion|offers?)\b|^制定.*计划|^创建.*活动|^规划.*活动", re.I)),
+    ("campaign", re.compile(r"\boffers?\b.*\bwho should (?:get|receive)\b", re.I)),
     ("experiment", re.compile(r"\b(srm|balance|a/b|ab test|experiment|ate|significan|valid)", re.I)),
-    ("method", re.compile(r"\b(what is|explain|why|how does|qini|pehe|x-learner|t-learner|causal forest|ipw)\b", re.I)),
+    ("method", re.compile(r"\b(qini|pehe|x-learner|t-learner|causal forest|ipw|churn risk|uplift|estimator)\b", re.I)),
+    ("discovery", re.compile(r"\b(discover|find opportunities|scan opportunities)\b|发现机会|寻找机会", re.I)),
 ]
 
 
@@ -29,7 +32,12 @@ class DeterministicProvider:
         for intent, pattern in INTENT_RULES:
             if pattern.search(question or ""):
                 return intent
-        return "campaign"
+        return "chat"
+
+    def design_campaigns(self, policy: dict, evidence: list[dict] | None = None) -> list[dict]:
+        """Offline candidate designer. All designs use the one supported intervention."""
+        return [{"name": "Retention across eligible subscribers", "audience": "all"},
+                {"name": "Monthly subscriber retention", "audience": "monthly"}]
 
     def narrate(self, facts: dict[str, Any], template_text: str) -> str:
         return template_text
@@ -45,6 +53,30 @@ class ClaudeProvider(DeterministicProvider):
 
         self.client = anthropic.Anthropic()
         self.model = model or os.environ.get("LLM_MODEL", "claude-opus-5-5")
+
+    def design_campaigns(self, policy: dict, evidence: list[dict] | None = None) -> list[dict]:
+        """The LLM designs; typed validation and the optimizer retain decision authority."""
+        from app.agents.contracts import CampaignDesign
+
+        fallback = super().design_campaigns(policy, evidence)
+        try:
+            response = self.client.beta.messages.create(
+                model=self.model, max_tokens=1500,
+                betas=["server-side-fallback-2026-07-01"], fallbacks="default",
+                output_config={"effort": "low"},
+                system=("Return only a JSON list of two to four campaign designs. Use the supplied schema "
+                        "and supported options exactly. Never estimate effects, assign customers, change policy, "
+                        "or add costs. Use different audiences when possible. Copy must be neutral."),
+                messages=[{"role": "user", "content": json.dumps({
+                    "policy": policy, "causal_evidence": evidence, "schema": CampaignDesign.model_json_schema(),
+                })}],
+            )
+            raw = json.loads("".join(b.text for b in response.content if b.type == "text"))
+            if not isinstance(raw, list) or not 2 <= len(raw) <= 4:
+                return fallback
+            return [CampaignDesign.model_validate(d).model_dump() for d in raw]
+        except Exception:  # invalid designs and provider failures stay within supported defaults
+            return fallback
 
     def narrate(self, facts: dict[str, Any], template_text: str) -> str:
         response = self.client.beta.messages.create(

@@ -1,6 +1,6 @@
-"""Report node: turn the state into a short brief.
+"""Report Agent: render completed evaluations without estimating effects.
 
-The template text is built only from numbers in the state. An optional LLM
+Legacy brief helpers are retained for Chat. Template numbers come from state. An optional LLM
 may rephrase it, but providers.numbers_match() rejects any new number.
 Code guide: section "Report" (sec:report).
 """
@@ -100,9 +100,18 @@ def build_text(state: AgentState, deps: Deps) -> str:
 
 
 def run_report(state: AgentState, deps: Deps) -> AgentState:
+    """Post-campaign report: quote evaluation results without making new estimates."""
     provider = get_provider(deps.settings["agent"]["provider"])
-    template = build_text(state, deps)
-    facts = {k: state.get(k) for k in ("intent", "experiment", "policy_summary", "review", "model")}
+    facts = state.get("evaluation")
+    if not facts:
+        raise ValueError("Report Agent requires completed campaign evaluation")
+    template = (
+        f"Campaign {facts['campaign_id']}: measured churn reduction {facts['estimate']:.6f} "
+        f"(95% CI {facts['ci_low']:.6f} to {facts['ci_high']:.6f}). "
+        f"Treatment: {facts['n_treatment']}; holdout: {facts['n_holdout']}. "
+        f"Predicted uplift: {facts['predicted_uplift']:.6f}; prediction error: {facts['prediction_error']:.6f}. "
+        + ("Campaign paused for negative effects." if facts['pause_required'] else "Evaluation complete.")
+    )
     narrative = provider.narrate(facts, template)
     return {
         "narrative": narrative,

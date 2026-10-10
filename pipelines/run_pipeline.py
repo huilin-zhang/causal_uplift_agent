@@ -63,6 +63,8 @@ def step_generate(cfg) -> dict[str, Any]:
     exp = simulate(n, seed, sim, "rct")
     obs = simulate(n, seed, sim, "observational")
     cur = simulate(n, seed + CURRENT_SEED_OFFSET, sim, "rct")
+    discovery = simulate(n, seed + 20_000, sim, "rct")
+    store.write_table("discovery_experiment", discovery.drop(columns=ORACLE_COLUMNS))
 
     # Tables the agent can query never contain the oracle columns.
     store.write_table("experiment", exp.drop(columns=ORACLE_COLUMNS))

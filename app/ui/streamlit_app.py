@@ -22,7 +22,7 @@ from app.agents.state import build_deps  # noqa: E402
 from app.causal.policy import policy_summary, rank_by_net_value, rank_by_risk  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 
-st.set_page_config(page_title="Causal Uplift Agent", layout="wide")
+st.set_page_config(page_title="Growth Marketing Agents", layout="wide")
 settings = get_settings()
 reports = Path(settings["paths"]["artifacts"]) / "reports"
 
@@ -37,7 +37,8 @@ def load(name: str) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
-st.title("Causal Uplift Agent for Customer Retention")
+st.title("Growth Marketing Agents with Causal ML")
+st.caption("Subscription-retention simulation · Draft, review, and evaluate campaigns with a randomized holdout.")
 experiment, summary = load("experiment.json"), load("benchmark_summary.json")
 if experiment is None or summary is None:
     st.warning("No pipeline results yet. Run `python -m pipelines.run_pipeline` first.")
@@ -79,7 +80,7 @@ with tab_bench:
         f"An A/B readout on one test set could not confirm this: observed difference {obs_r['median']:.0f} customers "
         f"(95% CI {obs_r['ci_low']:.0f} to {obs_r['ci_high']:.0f})."
     )
-    st.dataframe(pd.DataFrame(b["table_mean"]).T.round(4), use_container_width=True)
+    st.dataframe(pd.DataFrame(b["table_mean"]).T.round(4), alt="Historical model benchmark")
     curves = deps().store.read_table("qini_curves") if "qini_curves" in deps().store.tables() else None
     if curves is not None:
         metric = st.radio("Curve", ["gain_true", "qini_observed"], horizontal=True)
@@ -96,15 +97,25 @@ with tab_target:
     c[1].metric("Model-expected net value", f"${policy_summary(up)['expected_net_value']:,.0f}")
     c[2].metric("Same budget by churn risk: net value", f"${risk['net_value'].sum():,.0f}")
     st.caption("Uplift ranking stops when net value turns negative; risk ranking spends the whole budget.")
-    st.dataframe(up.head(200), use_container_width=True)
+    st.dataframe(up.head(200), alt="Customers ranked by predicted net value")
 
 with tab_agent:
     question = st.text_input("Ask the agent", "Plan this month's retention campaign.")
-    agent_budget = st.number_input("Budget", 100, 50_000, settings["agent"]["default_budget"], step=100)
+    agent_budget = st.number_input("Maximum campaign audience", 100, 50_000, settings["agent"]["default_budget"], step=100)
     if st.button("Run"):
         state = run_agent(question, int(agent_budget), settings, deps())
         st.markdown(state["narrative"].replace("\n", "  \n").replace("$", "\\$"))
         st.json(state.get("review") or {})
+        if state.get("plan"):
+            with st.expander("Campaign plan and alternative", expanded=True):
+                st.json(state["plan"])
+        if state.get("messages"):
+            st.subheader("Draft messages")
+            for message in state["messages"]:
+                st.text(message["text"])
+        if state.get("opportunities"):
+            with st.expander("Opportunity discovery"):
+                st.json(state["opportunities"])
         with st.expander("Trace"):
             for line in state["trace"]:
                 st.text(line)

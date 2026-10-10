@@ -50,6 +50,22 @@ def test_gates_pass_on_pipeline(pipeline_env):
     assert set(gates["checks"]) >= {"srm_passed", "qini_beats_random", "policy_value_vs_risk"}
 
 
+def test_campaign_evaluation_api(client):
+    roles = client.get("/agents").json()
+    assert len(roles["roles"]) == 8
+    out = client.post("/agent/run", json={"question": "Plan a retention campaign", "budget": 20}).json()
+    assert out["review"]["passed"] and out["messages"] and out["plan"]
+    cid = out["campaign_id"]
+    assert client.post(f"/campaigns/{cid}/decision", json={"reviewer": "test", "approve": True}).status_code == 200
+    details = client.get(f"/campaigns/{cid}").json()
+    outcomes = [{"customer_id": o["customer_id"], "churn_30d": 0} for o in details["snapshot"]["offers"]]
+    assert client.post(f"/campaigns/{cid}/evaluate", json={"outcomes": outcomes}).status_code == 422
+    result = client.post(f"/campaigns/{cid}/evaluate", json={"outcomes": outcomes, "outcome_window_complete": True})
+    assert result.status_code == 200
+    assert result.json()["estimate"] == 0 and result.json()["report"]
+    assert client.get(f"/campaigns/{cid}").json()["status"] == "evaluated"
+
+
 def test_gates_fail_on_broken_experiment(pipeline_env):
     reports = Path(pipeline_env["paths"]["artifacts"]) / "reports"
     exp = json.loads((reports / "experiment.json").read_text())

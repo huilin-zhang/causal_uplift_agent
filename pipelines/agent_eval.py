@@ -13,7 +13,6 @@ import json
 import shutil
 import sys
 import tempfile
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +22,7 @@ from app.agents.reviewer_agent import review
 from app.agents.state import Deps, build_deps
 from app.core.config import ROOT, get_settings
 from app.data.store import Store
+from app.services.campaigns import decide_campaign
 from app.services.memory import MemoryService
 from app.services.sql_service import SQLService
 
@@ -58,6 +58,8 @@ def check(case: dict, state: dict, deps: Deps) -> list[str]:
     rev = state.get("review") or {}
     if "intent" in exp and state.get("intent") != exp["intent"]:
         fails.append(f"intent {state.get('intent')} != {exp['intent']}")
+    if exp.get("no_offers") and state.get("offers"):
+        fails.append("read-only or discovery request created offers")
     if "review_passed" in exp and rev.get("passed") != exp["review_passed"]:
         fails.append(f"review passed = {rev.get('passed')}")
     offers = pd.DataFrame(state.get("offers") or [])
@@ -100,9 +102,8 @@ def run_eval(settings: dict | None = None) -> dict:
                 state = {"review": review(injected_state(case["inject"]), settings)}
             else:
                 if case.get("setup") == "approve_previous_campaign":
-                    first = run_agent(case["question"], case.get("budget"), settings, deps)
-                    deps.store.log_contacts(pd.DataFrame(first["offers"]), first["campaign_id"],
-                                            datetime.now(UTC).isoformat())
+                    first = run_agent(case["question"], min(50, case.get("budget", 50)), settings, deps)
+                    decide_campaign(first["campaign_id"], True, "golden-case reviewer", [], "", deps)
                 state = run_agent(case["question"], case.get("budget"), settings, deps)
             fails = check(case, state, deps)
             results.append({"id": case["id"], "passed": not fails, "failures": fails})

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "causal-uplift-agent"
-version = "0.1.0"
-description = "Uplift modeling and a LangGraph agent for customer retention offers"
+version = "0.2.0"
+description = "Growth marketing agents with causal targeting, policy planning and campaign evaluation"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11,<3.13"

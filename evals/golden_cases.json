@@ -18,5 +18,9 @@
   {"id": "reviewer_blocks_bad_offers", "inject": "sleeping_dog_offer",
    "expect": {"review_passed": false, "fixable_issue": "predicted effect <= 0"}},
   {"id": "reviewer_blocks_broken_test", "inject": "srm_failure",
-   "expect": {"review_passed": false, "blocking_issue": "SRM"}}
+   "expect": {"review_passed": false, "blocking_issue": "SRM"}},
+  {"id": "workflow_chat_is_read_only", "question": "What is the plan for the campaign?",
+   "expect": {"intent": "chat", "no_offers": true}},
+  {"id": "discovery_does_not_launch", "question": "Discover campaign opportunities",
+   "expect": {"intent": "discovery", "no_offers": true}}
 ]

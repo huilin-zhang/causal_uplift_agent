@@ -29,6 +29,7 @@ agent:
   max_review_retries: 2
   contact_cooldown_days: 30
   default_budget: 2000          # max offers per campaign
+  prohibited_claims: [guaranteed, risk-free, only today]
 
 mlflow:
   tracking_uri: sqlite:///artifacts/mlflow.db

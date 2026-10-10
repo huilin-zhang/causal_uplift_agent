@@ -10,7 +10,6 @@ Code guide: section "API" (sec:api).
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -22,6 +21,7 @@ from app.api.schemas import (
     AgentRequest,
     AgentResponse,
     ApproveRequest,
+    EvaluationRequest,
     RecommendRequest,
     ScoreRequest,
     ScoreResponse,
@@ -31,7 +31,7 @@ from app.causal.policy import policy_summary, rank_by_net_value
 from app.core.config import get_settings
 from app.services.registry import registry_status
 
-app = FastAPI(title="Causal Uplift Agent", version="0.1.0")
+app = FastAPI(title="Growth Marketing Agents with Causal ML", version="0.2.0")
 _DEPS: Deps | None = None
 
 
@@ -59,6 +59,13 @@ def health(deps: Deps = Depends(get_deps)) -> dict:
         "provider": deps.settings["agent"]["provider"],
         "tables": deps.store.tables(),
     }
+
+
+@app.get("/agents")
+def agent_roles() -> dict:
+    from app.agents.roles import AGENT_ROLES
+
+    return {"roles": AGENT_ROLES, "automation_level": "assisted", "delivery": "local_simulation"}
 
 
 @app.get("/model")
@@ -114,30 +121,50 @@ def recommend(req: RecommendRequest, deps: Deps = Depends(get_deps)) -> dict:
 
 @app.post("/agent/run", response_model=AgentResponse)
 def agent_run(req: AgentRequest, deps: Deps = Depends(get_deps)) -> AgentResponse:
-    state = run_agent(req.question, req.budget, deps.settings, deps)
+    state = run_agent(req.question, req.budget, deps.settings, deps,
+                      policy_targets=req.policy_targets.model_dump() if req.policy_targets else None)
     return AgentResponse(
         intent=state["intent"], narrative=state["narrative"], review=state.get("review"),
         policy_summary=state.get("policy_summary"), campaign_id=state.get("campaign_id"),
         trace=state["trace"], provider=state["provider"],
         model_version=deps.scorer.version if deps.scorer else None,
+        policy_targets=state.get("policy_targets"), plan=state.get("plan"),
+        messages=state.get("messages"), opportunities=state.get("opportunities"),
     )
 
 
 @app.post("/campaigns/{campaign_id}/decision")
 def campaign_decision(campaign_id: str, req: ApproveRequest, deps: Deps = Depends(get_deps)) -> dict:
-    """Human sign-off. Approval logs contacts (which start the cooldown); exclusions go to memory."""
-    if "pending_offers" not in deps.store.tables():
-        raise HTTPException(404, "no pending campaigns")
-    pending = deps.store.query("SELECT * FROM pending_offers WHERE campaign_id = ?", (campaign_id,))
-    if pending.empty:
-        raise HTTPException(404, f"campaign {campaign_id} not found")
-    deps.memory.remember("feedback", {"campaign_id": campaign_id, "reviewer": req.reviewer,
-                                      "approve": req.approve, "exclude_ids": req.exclude_ids, "note": req.note})
-    sent = 0
-    if req.approve:
-        to_send = pending[~pending["customer_id"].isin(req.exclude_ids)]
-        sent = deps.store.log_contacts(to_send, campaign_id, datetime.now(UTC).isoformat())
-    status = "approved" if req.approve else "rejected"
-    with deps.store.connect() as conn:
-        conn.execute("UPDATE pending_offers SET status = ? WHERE campaign_id = ?", (status, campaign_id))
-    return {"campaign_id": campaign_id, "status": status, "contacts_logged": sent}
+    """Human approval simulates launch with a randomized holdout; no messages are sent."""
+    from app.services.campaigns import decide_campaign
+
+    try:
+        return decide_campaign(campaign_id, req.approve, req.reviewer, req.exclude_ids, req.note, deps)
+    except KeyError as exc:
+        raise HTTPException(404, "campaign not found") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/campaigns/{campaign_id}")
+def campaign_details(campaign_id: str, deps: Deps = Depends(get_deps)) -> dict:
+    from app.services.campaigns import get_campaign
+
+    try:
+        return get_campaign(campaign_id, deps)
+    except KeyError as exc:
+        raise HTTPException(404, "campaign not found") from exc
+
+
+@app.post("/campaigns/{campaign_id}/evaluate")
+def campaign_evaluate(campaign_id: str, req: EvaluationRequest, deps: Deps = Depends(get_deps)) -> dict:
+    from app.agents.campaign_evaluation_agent import evaluate_campaign
+
+    if not req.outcome_window_complete:
+        raise HTTPException(422, "confirm that the fixed outcome window is complete")
+    try:
+        return evaluate_campaign(campaign_id, [r.model_dump() for r in req.outcomes], deps)
+    except KeyError as exc:
+        raise HTTPException(404, "campaign not found") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
